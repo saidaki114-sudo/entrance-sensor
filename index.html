@@ -86,7 +86,7 @@
 const SERVICE = '8d5c0001-6f2e-4c2b-9a77-3c1f0e2a5b10', PARAMS = '8d5c0002-6f2e-4c2b-9a77-3c1f0e2a5b10', LIVE = '8d5c0003-6f2e-4c2b-9a77-3c1f0e2a5b10', COMMAND = '8d5c0004-6f2e-4c2b-9a77-3c1f0e2a5b10';
 const RESULT = {0: '保存しました', 1: '暗証番号が違います', 2: 'LD2410C が応答しません（TX/RX の配線を確認）', 3: '命令が正しくありません', 255: ''};
 const $ = id => document.getElementById(id);
-let device = null, chars = {}, params = null, live = null, liveTimer = null, busy = false, connecting = false;
+let device = null, chars = {}, params = null, live = null, liveTimer = null, busy = false, connecting = false, step = '';
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 
 for (const id of ['maxMove', 'maxStill']) for (let g = 2; g <= 8; g++) $(id).add(new Option('約' + ((g + 1) * 0.75).toFixed(2) + 'm（ゲート' + g + '）', g));
@@ -110,8 +110,8 @@ function enable(on) { for (const id of ['saveRange', 'saveGates', 'reload']) $(i
 
 function applyParams(v) {
   const b = new Uint8Array(v.buffer);
-  if (b.length < 23) return;
-  params = { result: b[0], maxMove: b[1], maxStill: b[2], idle: b[3] | (b[4] << 8), move: [...b.slice(5, 14)], still: [...b.slice(14, 23)] };
+  if (b.length < 22) return;
+  params = { result: b[0], maxMove: b[1] >> 4, maxStill: b[1] & 0x0F, idle: b[2] | (b[3] << 8), move: [...b.slice(4, 13)], still: [...b.slice(13, 22)] };
   $('maxMove').value = params.maxMove; $('maxStill').value = params.maxStill; $('idle').value = params.idle;
   for (let i = 0; i <= 8; i++) {
     $('m' + i).value = params.move[i]; $('mv' + i).textContent = params.move[i];
@@ -143,28 +143,28 @@ async function connect() {
     let service = null, lastError = null;
     for (let attempt = 1; attempt <= 4 && !service; attempt++) {
       try {
-        const server = await device.gatt.connect();
+        step = '接続'; const server = await device.gatt.connect();
         await new Promise(r => setTimeout(r, 600));
         if (!server.connected) throw new Error('接続がすぐ切れました');
-        service = await server.getPrimaryService(SERVICE);
+        step = '設定用の窓口を探す'; service = await server.getPrimaryService(SERVICE);
       } catch (e) { lastError = e; $('conn').textContent = '接続中…（やり直し ' + attempt + '回目）'; await new Promise(r => setTimeout(r, 1000)); }
     }
     connecting = false;
     if (!service) throw lastError;
-    chars.params = await service.getCharacteristic(PARAMS);
+    step = '項目を探す'; chars.params = await service.getCharacteristic(PARAMS);
     chars.live = await service.getCharacteristic(LIVE);
     chars.command = await service.getCharacteristic(COMMAND);
-    await readParams();
+    step = '設定を読む'; await readParams();
     if (params.result === 2) setMsg('rangeMsg', RESULT[2], false);
     chars.live.addEventListener('characteristicvaluechanged', e => { live = new Uint8Array(e.target.value.buffer); showLive(); });
-    await chars.live.startNotifications();
+    step = '反応の通知を始める'; await chars.live.startNotifications();
     const keepAlive = () => chars.command.writeValue(new TextEncoder().encode('live')).catch(() => {});
-    await keepAlive(); liveTimer = setInterval(keepAlive, 10000);
+    step = '反応の送信を頼む'; await keepAlive(); liveTimer = setInterval(keepAlive, 10000);
     $('conn').textContent = '接続中: ' + (device.name || 'Entrance Wake'); $('connect').textContent = '切断';
     enable(true);
   } catch (e) {
     connecting = false;
-    if (e.name !== 'NotFoundError') setMsg('rangeMsg', '接続できませんでした: ' + e.message, false);
+    if (e.name !== 'NotFoundError') setMsg('rangeMsg', '接続できませんでした（' + step + 'の段階）: ' + e.name + ' ' + e.message, false);
     $('conn').textContent = '未接続';
   }
 }
