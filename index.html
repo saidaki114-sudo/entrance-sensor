@@ -121,7 +121,14 @@ function applyParams(v) {
   drawChart();
 }
 
-async function readParams() { applyParams(await chars.params.readValue()); return params; }
+async function readParams() {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try { applyParams(await chars.params.readValue()); return params; }
+    catch (e) { lastError = e; await new Promise(r => setTimeout(r, 700)); }
+  }
+  throw lastError;
+}
 
 async function sendCommand(text) {
   const pin = $('pin').value.trim();
@@ -154,7 +161,7 @@ async function connect() {
     step = '項目を探す'; chars.params = await service.getCharacteristic(PARAMS);
     chars.live = await service.getCharacteristic(LIVE);
     chars.command = await service.getCharacteristic(COMMAND);
-    step = '設定を読む'; await readParams();
+    step = '設定を読む'; await new Promise(r => setTimeout(r, 500)); await readParams();
     if (params.result === 2) setMsg('rangeMsg', RESULT[2], false);
     chars.live.addEventListener('characteristicvaluechanged', e => { live = new Uint8Array(e.target.value.buffer); showLive(); });
     step = '反応の通知を始める'; await chars.live.startNotifications();
