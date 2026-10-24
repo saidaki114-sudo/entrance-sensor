@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>人感センサーの設定</title>
+<style>
+  :root { --bg:#f5f5f0; --panel:#fff; --text:#1f2421; --muted:#6b7268; --line:#dfe2da; --accent:#3a6ea5; --on:#2f8f5b; --on-bg:#e3f4ea; --off:#8a8f87; --off-bg:#eeefeb; --bar:#3a6ea5; --bar2:#c08a2c; --thr:#c0392b; --err:#b03a2e; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#16191b; --panel:#1f2326; --text:#e8ebe6; --muted:#9aa29a; --line:#30363a; --accent:#7fb0e6; --on:#5ccf8d; --on-bg:#1d3527; --off:#9aa29a; --off-bg:#262b2e; --bar:#7fb0e6; --bar2:#e0b860; --thr:#ff7b6b; --err:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif; }
+  header { padding: 14px 16px; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  header h1 { font-size: 18px; margin: 0 auto 0 0; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  button { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  label { display: grid; gap: 6px; font-size: 14px; }
+  select, input[type=number], input[type=password] { font: inherit; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .grid2 { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .status { display: flex; align-items: center; justify-content: center; height: 90px; border-radius: 12px; font-size: 34px; font-weight: 700; }
+  .status.on { background: var(--on-bg); color: var(--on); } .status.off { background: var(--off-bg); color: var(--off); }
+  canvas { width: 100%; height: 220px; display: block; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 8px 0 0; }
+  .msg { min-height: 1.4em; font-size: 14px; margin-top: 8px; } .msg.err { color: var(--err); } .msg.ok { color: var(--on); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: left; }
+  td input[type=range] { width: 100%; }
+  td.num { width: 3em; text-align: right; font-variant-numeric: tabular-nums; }
+  tr.out td { color: var(--muted); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>人感センサー（LD2410C）の設定</h1>
+  <span id="conn">未接続</span>
+  <button class="primary" id="connect">Entrance Wake に接続</button>
+</header>
+<main>
+  <section class="card" id="unsupported" hidden>
+    <h2>このブラウザでは使えません</h2>
+    <p class="hint">Bluetooth に接続する機能（Web Bluetooth）が必要です。Android タブレットの <b>Chrome</b> か、パソコンの Chrome・Edge で開いてください。ページは https のアドレスで開く必要があります。</p>
+  </section>
+
+  <section class="card">
+    <h2>今の反応</h2>
+    <div class="status off" id="state">—</div>
+    <canvas id="chart"></canvas>
+    <p class="hint">0.75m ごとの反応の強さです。青＝動いている人、黄＝止まっている人、赤い線＝しきい値。棒が線を超えると「人あり」になります。点線より右の距離は検知しません。</p>
+  </section>
+
+  <section class="card">
+    <h2>検知する範囲と時間</h2>
+    <div class="grid2">
+      <label>動いている人を検知する最大距離<select id="maxMove"></select></label>
+      <label>止まっている人を検知する最大距離<select id="maxStill"></select></label>
+      <label>いなくなってから「人なし」にするまで（秒）<input type="number" id="idle" min="0" max="600" step="1"></label>
+    </div>
+    <div class="row"><button class="primary" id="saveRange" disabled>範囲と時間を保存</button></div>
+    <div class="msg" id="rangeMsg"></div>
+  </section>
+
+  <section class="card">
+    <h2>距離ごとの感度（しきい値）</h2>
+    <p class="hint" style="margin-top:0">数字が<b>大きいほど鈍く</b>なります（100 でほぼ反応しない）。誰もいないときの棒の高さより 10〜15 上にすると、誤って反応しにくくなります。0〜1.5m の「止まっている人」は LD2410C の仕様で変えられないことがあります。</p>
+    <table>
+      <thead><tr><th>距離</th><th>動き</th><th></th><th>止まり</th><th></th></tr></thead>
+      <tbody id="gates"></tbody>
+    </table>
+    <div class="row"><button class="primary" id="saveGates" disabled>感度を保存</button><button id="reload" disabled>LD2410C から読み直す</button></div>
+    <div class="msg" id="gateMsg"></div>
+  </section>
+
+  <section class="card">
+    <h2>暗証番号</h2>
+    <label>ESP32 のスケッチに設定した暗証番号（RADAR_CONFIG_PIN）<input type="password" id="pin" inputmode="numeric" autocomplete="off" placeholder="例: 1234"></label>
+    <p class="hint">設定を保存するときに必要です。この端末のブラウザにだけ覚えておきます。</p>
+  </section>
+</main>
+<script>
+const SERVICE = '8d5c0001-6f2e-4c2b-9a77-3c1f0e2a5b10', PARAMS = '8d5c0002-6f2e-4c2b-9a77-3c1f0e2a5b10', LIVE = '8d5c0003-6f2e-4c2b-9a77-3c1f0e2a5b10', COMMAND = '8d5c0004-6f2e-4c2b-9a77-3c1f0e2a5b10';
+const RESULT = {0: '保存しました', 1: '暗証番号が違います', 2: 'LD2410C が応答しません（TX/RX の配線を確認）', 3: '命令が正しくありません', 255: ''};
+const $ = id => document.getElementById(id);
+let device = null, chars = {}, params = null, live = null, liveTimer = null, busy = false, connecting = false;
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+for (const id of ['maxMove', 'maxStill']) for (let g = 2; g <= 8; g++) $(id).add(new Option('約' + ((g + 1) * 0.75).toFixed(2) + 'm（ゲート' + g + '）', g));
+$('pin').value = store.get('ld2410-pin') || '';
+$('pin').addEventListener('change', () => store.set('ld2410-pin', $('pin').value.trim()));
+if (!navigator.bluetooth) { $('unsupported').hidden = false; $('connect').disabled = true; }
+
+function buildGates() {
+  const tbody = $('gates'); tbody.innerHTML = '';
+  for (let i = 0; i <= 8; i++) {
+    const tr = document.createElement('tr'); tr.id = 'g' + i;
+    tr.innerHTML = `<td>${(i * 0.75).toFixed(2)}〜${((i + 1) * 0.75).toFixed(2)}m</td><td><input type="range" min="0" max="100" id="m${i}"></td><td class="num" id="mv${i}"></td><td><input type="range" min="0" max="100" id="s${i}"></td><td class="num" id="sv${i}"></td>`;
+    tbody.appendChild(tr);
+    for (const k of ['m', 's']) $(k + i).addEventListener('input', () => { $(k + 'v' + i).textContent = $(k + i).value; drawChart(); });
+  }
+}
+buildGates();
+
+function setMsg(id, text, ok) { const el = $(id); el.textContent = text; el.className = 'msg ' + (text ? (ok ? 'ok' : 'err') : ''); }
+function enable(on) { for (const id of ['saveRange', 'saveGates', 'reload']) $(id).disabled = !on; }
+
+function applyParams(v) {
+  const b = new Uint8Array(v.buffer);
+  if (b.length < 23) return;
+  params = { result: b[0], maxMove: b[1], maxStill: b[2], idle: b[3] | (b[4] << 8), move: [...b.slice(5, 14)], still: [...b.slice(14, 23)] };
+  $('maxMove').value = params.maxMove; $('maxStill').value = params.maxStill; $('idle').value = params.idle;
+  for (let i = 0; i <= 8; i++) {
+    $('m' + i).value = params.move[i]; $('mv' + i).textContent = params.move[i];
+    $('s' + i).value = params.still[i]; $('sv' + i).textContent = params.still[i];
+    $('g' + i).className = i > Math.max(params.maxMove, params.maxStill) ? 'out' : '';
+  }
+  drawChart();
+}
+
+async function readParams() { applyParams(await chars.params.readValue()); return params; }
+
+async function sendCommand(text) {
+  const pin = $('pin').value.trim();
+  if (!pin) throw new Error('暗証番号を入力してください');
+  store.set('ld2410-pin', pin);
+  await chars.command.writeValue(new TextEncoder().encode(pin + ' ' + text));
+  await new Promise(r => setTimeout(r, 1200));
+  const p = await readParams();
+  if (p.result !== 0) throw new Error(RESULT[p.result] || 'うまくいきませんでした');
+}
+
+async function connect() {
+  try {
+    device = await navigator.bluetooth.requestDevice({ filters: [{ name: 'Entrance Wake' }], optionalServices: [SERVICE] });
+    connecting = true;
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    $('conn').textContent = '接続中…';
+    // Windows などでは最初の接続がすぐ切れることがあるので、少し待って何度かやり直す
+    let service = null, lastError = null;
+    for (let attempt = 1; attempt <= 4 && !service; attempt++) {
+      try {
+        const server = await device.gatt.connect();
+        await new Promise(r => setTimeout(r, 600));
+        if (!server.connected) throw new Error('接続がすぐ切れました');
+        service = await server.getPrimaryService(SERVICE);
+      } catch (e) { lastError = e; $('conn').textContent = '接続中…（やり直し ' + attempt + '回目）'; await new Promise(r => setTimeout(r, 1000)); }
+    }
+    connecting = false;
+    if (!service) throw lastError;
+    chars.params = await service.getCharacteristic(PARAMS);
+    chars.live = await service.getCharacteristic(LIVE);
+    chars.command = await service.getCharacteristic(COMMAND);
+    await readParams();
+    if (params.result === 2) setMsg('rangeMsg', RESULT[2], false);
+    chars.live.addEventListener('characteristicvaluechanged', e => { live = new Uint8Array(e.target.value.buffer); showLive(); });
+    await chars.live.startNotifications();
+    const keepAlive = () => chars.command.writeValue(new TextEncoder().encode('live')).catch(() => {});
+    await keepAlive(); liveTimer = setInterval(keepAlive, 10000);
+    $('conn').textContent = '接続中: ' + (device.name || 'Entrance Wake'); $('connect').textContent = '切断';
+    enable(true);
+  } catch (e) {
+    connecting = false;
+    if (e.name !== 'NotFoundError') setMsg('rangeMsg', '接続できませんでした: ' + e.message, false);
+    $('conn').textContent = '未接続';
+  }
+}
+function onDisconnected() {
+  if (connecting) return;  // やり直しの途中で切れたときは、ここでは片付けない
+  clearInterval(liveTimer); liveTimer = null; enable(false);
+  $('conn').textContent = '切断されました'; $('connect').textContent = 'Entrance Wake に接続';
+  $('state').textContent = '—'; $('state').className = 'status off'; device = null;
+}
+
+function showLive() {
+  const st = live[0], el = $('state');
+  el.textContent = ['人なし', '人あり（動き）', '人あり（止まっている）', '人あり（動き＋止まり）'][st] || '—';
+  el.className = 'status ' + (st ? 'on' : 'off');
+  drawChart();
+}
+
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function drawChart() {
+  const c = $('chart'), r = c.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  if (c.width !== Math.round(r.width * dpr)) { c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr); }
+  const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const w = r.width, h = r.height, pad = 26, gw = (w - pad) / 9, top = 16, bottom = h - 34, y = v => bottom - Math.min(100, v) / 100 * (bottom - top);
+  ctx.clearRect(0, 0, w, h); ctx.font = '11px sans-serif';
+  ctx.strokeStyle = cssVar('--line'); ctx.fillStyle = cssVar('--muted');
+  for (const v of [0, 50, 100]) { ctx.beginPath(); ctx.moveTo(pad, y(v)); ctx.lineTo(w, y(v)); ctx.stroke(); ctx.fillText(v, 2, y(v) + 4); }
+  for (let i = 0; i < 9; i++) {
+    const x0 = pad + i * gw, bw = gw * 0.34;
+    ctx.fillStyle = cssVar('--muted'); ctx.fillText((i * 0.75).toFixed(1) + '〜', x0 + 2, bottom + 14); ctx.fillText(((i + 1) * 0.75).toFixed(2) + 'm', x0 + 2, bottom + 27);
+    if (live) {
+      ctx.fillStyle = cssVar('--bar'); ctx.fillRect(x0 + gw * 0.12, y(live[1 + i]), bw, bottom - y(live[1 + i]));
+      ctx.fillStyle = cssVar('--bar2'); ctx.fillRect(x0 + gw * 0.12 + bw + 3, y(live[10 + i]), bw, bottom - y(live[10 + i]));
+    }
+    const tm = +$('m' + i).value, ts = +$('s' + i).value;
+    if (params) {
+      ctx.strokeStyle = cssVar('--thr'); ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(x0 + gw * 0.08, y(tm)); ctx.lineTo(x0 + gw * 0.12 + bw, y(tm));
+      ctx.moveTo(x0 + gw * 0.12 + bw + 3, y(ts)); ctx.lineTo(x0 + gw * 0.92, y(ts)); ctx.stroke(); ctx.lineWidth = 1;
+    }
+  }
+  if (params) {
+    const g = Math.max(+$('maxMove').value, +$('maxStill').value);
+    if (g < 8) { const x = pad + (g + 1) * gw; ctx.setLineDash([5, 4]); ctx.strokeStyle = cssVar('--muted'); ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke(); ctx.setLineDash([]); }
+  }
+}
+['maxMove', 'maxStill'].forEach(id => $(id).addEventListener('change', drawChart));
+addEventListener('resize', drawChart);
+
+async function guarded(msgId, fn) {
+  if (busy) return; busy = true; enable(false); setMsg(msgId, '保存しています…', true);
+  try { await fn(); setMsg(msgId, RESULT[0], true); } catch (e) { setMsg(msgId, e.message, false); } finally { busy = false; enable(!!device); }
+}
+$('connect').onclick = () => device ? device.gatt.disconnect() : connect();
+$('saveRange').onclick = () => guarded('rangeMsg', async () => {
+  const idle = Math.round(+$('idle').value);
+  if (!(idle >= 0 && idle <= 600)) throw new Error('秒数は 0〜600 で入力してください');
+  await sendCommand(`max ${$('maxMove').value} ${$('maxStill').value} ${idle}`);
+});
+$('saveGates').onclick = () => guarded('gateMsg', async () => {
+  let changed = 0;
+  for (let i = 0; i <= 8; i++) {
+    const m = +$('m' + i).value, s = +$('s' + i).value;
+    if (params && params.move[i] === m && params.still[i] === s) continue;
+    await sendCommand(`gate ${i} ${m} ${s}`); changed++;
+  }
+  if (!changed) throw new Error('変更はありません');
+});
+$('reload').onclick = () => guarded('gateMsg', () => sendCommand('read'));
+drawChart();
+</script>
+</body>
+</html>
